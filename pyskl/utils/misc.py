@@ -8,6 +8,7 @@ import os
 import os.path as osp
 import socket
 import warnings
+import sys
 from mmcv import load
 from mmcv.runner import get_dist_info
 from mmcv.utils import get_logger
@@ -52,12 +53,12 @@ def cache_file(arg_tuple):
         while not isinstance(flag, dict):
             try:
                 cli.set(k, v)
-            except:
+            except BaseException:
                 cli = Client(mc_cfg, serde=serde.pickle_serde)
                 cli.set(k, v)
             try:
                 flag = cli.get(k)
-            except:
+            except BaseException:
                 cli = Client(mc_cfg, serde=serde.pickle_serde)
                 flag = cli.get(k)
 
@@ -80,7 +81,9 @@ def mp_cache_single(mc_cfg, file_name, num_proc=32):
 
 
 def mc_off():
-    os.system('killall memcached')
+    print('killall memcached')
+    sys.exit(0)
+    # os.system('killall memcached')
 
 
 def test_port(ip, port):
@@ -123,6 +126,7 @@ def cache_checkpoint(filename, cache_dir='.cache'):
             download_file(filename, local_pth)
         filename = local_pth
     return filename
+
 
 def warning_r0(warn_str):
     rank, _ = get_dist_info()
