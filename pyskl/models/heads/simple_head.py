@@ -24,9 +24,9 @@ class SimpleHead(BaseHead):
                  num_classes,
                  in_channels,
                  loss_cls=dict(type='CrossEntropyLoss'),
-                 dropout=0.5,
+                 dropout=0.,
                  init_std=0.01,
-                 mode='3D',
+                 mode='GCN',
                  **kwargs):
         super().__init__(num_classes, in_channels, loss_cls, **kwargs)
 

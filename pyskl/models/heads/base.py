@@ -6,6 +6,8 @@ from abc import ABCMeta, abstractmethod
 from ...core import top_k_accuracy
 from ..builder import build_loss
 
+from ..losses.class_specific_contrastive_loss import Class_Specific_Contrastive_Loss
+
 
 class BaseHead(nn.Module, metaclass=ABCMeta):
     """Base class for head.
@@ -31,13 +33,25 @@ class BaseHead(nn.Module, metaclass=ABCMeta):
                  in_channels,
                  loss_cls=dict(type='CrossEntropyLoss', loss_weight=1.0),
                  multi_class=False,
-                 label_smooth_eps=0.0):
+                 label_smooth_eps=0.0,
+                 joint_cfg=None,  # reference 'protogcn',
+                 weight=1.0):
         super().__init__()
         self.num_classes = num_classes
         self.in_channels = in_channels
         self.loss_cls = build_loss(loss_cls)
         self.multi_class = multi_class
         self.label_smooth_eps = label_smooth_eps
+        self.weight = weight
+
+        if joint_cfg is not None:
+            if joint_cfg == 'nturgb+d':  # 25*25=625
+                n_channel = 625
+            elif joint_cfg == 'coco_new':   # 20*20=400
+                n_channel = 400
+            else:
+                raise ValueError(f'Unsupported joint_cfg: {joint_cfg}')
+            self.csc_loss = Class_Specific_Contrastive_Loss(num_classes, n_channel)
 
     @abstractmethod
     def init_weights(self):
@@ -48,7 +62,7 @@ class BaseHead(nn.Module, metaclass=ABCMeta):
     def forward(self, x):
         """Defines the computation performed at every call."""
 
-    def loss(self, cls_score, label, **kwargs):
+    def loss(self, cls_score, get_graph, label, **kwargs):
         """Calculate the loss given output ``cls_score``, target ``label``.
 
         Args:
@@ -77,8 +91,13 @@ class BaseHead(nn.Module, metaclass=ABCMeta):
         elif self.multi_class and self.label_smooth_eps != 0:
             label = ((1 - self.label_smooth_eps) * label + self.label_smooth_eps / self.num_classes)
 
-        loss_cls = self.loss_cls(cls_score, label, **kwargs)
         # loss_cls may be dictionary or single tensor
+        loss_cls = self.loss_cls(cls_score, label, **kwargs)
+        if get_graph is not None:
+            loss_csc = self.csc_loss(get_graph, label.detach(), cls_score.detach())
+            if isinstance(loss_cls, dict):
+                loss_cls = sum(loss_cls.values())
+            loss_cls = loss_cls.mean() + self.weight * loss_csc.mean()
         if isinstance(loss_cls, dict):
             losses.update(loss_cls)
         else:

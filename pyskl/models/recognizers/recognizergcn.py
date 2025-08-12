@@ -16,10 +16,15 @@ class RecognizerGCN(BaseRecognizer):
         keypoint = keypoint[:, 0]
 
         losses = dict()
+        # x, get_graph = self.extract_feat(keypoint)
         x = self.extract_feat(keypoint)
+        get_graph = None
+        if isinstance(x, tuple) or isinstance(x, list):
+            x, get_graph = x
         cls_score = self.cls_head(x)
         gt_label = label.squeeze(-1)
-        loss = self.cls_head.loss(cls_score, gt_label)
+        # loss = self.cls_head.loss(cls_score, gt_label)
+        loss = self.cls_head.loss(cls_score, get_graph, gt_label)
         losses.update(loss)
 
         return losses
@@ -31,7 +36,10 @@ class RecognizerGCN(BaseRecognizer):
         bs, nc = keypoint.shape[:2]
         keypoint = keypoint.reshape((bs * nc, ) + keypoint.shape[2:])
 
+        # x = self.extract_feat(keypoint)
         x = self.extract_feat(keypoint)
+        if isinstance(x, tuple) or isinstance(x, list):
+            x, get_graph = x
         feat_ext = self.test_cfg.get('feat_ext', False)
         pool_opt = self.test_cfg.get('pool_opt', 'all')
         score_ext = self.test_cfg.get('score_ext', False)
