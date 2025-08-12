@@ -1,4 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import random
+
 import numpy as np
 from scipy.stats import mode as get_mode
 
@@ -292,12 +294,128 @@ class PreNormalize3D:
         return results
 
 
+@PIPELINES.register_module()
+class Spatial_Flip:
+    """Flip the skeleton. """
+
+    def __init__(self, dataset='nturgb+d', p=0.5):
+        assert isinstance(p, tuple) or isinstance(p, float)
+        self.dataset = dataset
+        self.p = p
+
+    def __call__(self, results):
+        skeleton = results['keypoint']
+        p = self.p
+        transform_order = {'ntu': [0, 1, 2, 3, 8, 9, 10, 11, 4, 5, 6, 7, 16, 17, 18,
+                                   19, 12, 13, 14, 15, 20, 23, 24, 21, 22],
+                           'nw_ucla': [0, 1, 2, 3, 8, 9, 10, 11, 4, 5, 6, 7, 16, 17,
+                                       18, 19, 12, 13, 14, 15],
+                           'openpose': [0, 1, 5, 6, 7, 2, 3, 4, 11, 12, 13, 8, 9, 10,
+                                        15, 14, 17, 16]
+                           }
+        if random.random() < p:
+            if self.dataset == 'nturgb+d':
+                index = transform_order['ntu']
+            elif self.dataset == 'nw_ucla':
+                index = transform_order['nw_ucla']
+            elif self.dataset == 'openpose':
+                index = transform_order['openpose']
+            trans_skeleton = skeleton[:, :, index, :]
+            results['keypoint'] = trans_skeleton
+        else:
+            results['keypoint'] = skeleton
+
+        return results
+
+
+@PIPELINES.register_module()
+class Part_Drop:
+    """Drop the left or right limbs of the skeleton. """
+
+    def __init__(self, p=0.2):
+        assert isinstance(p, tuple) or isinstance(p, float)
+        self.p = p
+
+    def __call__(self, results):
+        skeleton = results['keypoint']
+        p = self.p
+
+        if random.random() < p:
+            left_hand = [4, 5, 6, 7, 22, 21]
+            left_leg = [12, 13, 14, 15]
+            right_hand = [8, 9, 10, 11, 24, 23]
+            right_leg = [16, 17, 18, 19]
+
+            part = random.randint(0, 3)
+            temp = skeleton.copy()
+            # M T V C -> V M T C
+            temp = temp.transpose(2, 0, 1, 3)
+            M, T, V, C = skeleton.shape
+            x_new = np.zeros((M, T, C))
+            if part == 0:
+                for idx in left_hand:
+                    temp[idx] = x_new
+            elif part == 1:
+                for idx in left_leg:
+                    temp[idx] = x_new
+            elif part == 2:
+                for idx in right_hand:
+                    temp[idx] = x_new
+            elif part == 3:
+                for idx in right_leg:
+                    temp[idx] = x_new
+
+            # V M T C -> M T V C
+            temp = temp.transpose(1, 2, 0, 3)
+            results['keypoint'] = temp
+        else:
+            results['keypoint'] = skeleton
+
+        return results
+
+
+@PIPELINES.register_module()
+class Kinetics_Transform:
+    """  coco_17 -> coco_20  """
+
+    def __init__(self, dataset='coco_new'):
+        self.dataset = dataset
+
+    def __call__(self, results):
+
+        if 'keypoint_score' in results and 'keypoint' in results:
+            assert self.dataset != 'nturgb+d'
+            assert results['keypoint'].shape[-1] == 2, 'Only 2D keypoints have keypoint_score. '
+            keypoint = results.pop('keypoint')
+            keypoint_score = results.pop('keypoint_score')
+            results['keypoint'] = np.concatenate([keypoint, keypoint_score[..., None]], -1)
+
+        # M T V C
+        skeleton = results['keypoint']
+        M, T, V, C = skeleton.shape
+        # M T V C -> V M T C
+        skeleton = skeleton.transpose(2, 0, 1, 3)
+        add_term = np.zeros((3, M, T, C))
+
+        add_term[0] = (skeleton[11] + skeleton[12]) / 2
+        add_term[2] = (skeleton[5] + skeleton[6]) / 2
+        add_term[1] = (add_term[0] + add_term[2]) / 2
+
+        skeleton = np.concatenate([skeleton, add_term], 0)
+        # V M T C -> M T V C
+        skeleton = skeleton.transpose(1, 2, 0, 3).astype(np.float32)
+        results['keypoint'] = skeleton
+
+        return results
+
+
+@PIPELINES.register_module()
 class JointToBone:
 
     def __init__(self, dataset='nturgb+d', target='keypoint'):
         self.dataset = dataset
         self.target = target
-        if self.dataset not in ['nturgb+d', 'openpose', 'coco', 'handmp']:
+        if self.dataset not in ['nturgb+d', 'openpose', 'openpose_new', 'coco', 'coco_new', 'handmp']:
             raise ValueError(
                 f'The dataset type {self.dataset} is not supported')
         if self.dataset == 'nturgb+d':
@@ -305,11 +423,17 @@ class JointToBone:
                           (10, 9), (11, 10), (12, 0), (13, 12), (14, 13), (15, 14), (16, 0), (17, 16), (18, 17),
                           (19, 18), (21, 22), (20, 20), (22, 7), (23, 24), (24, 11))
         elif self.dataset == 'openpose':
-            self.pairs = ((0, 0), (1, 0), (2, 1), (3, 2), (4, 3), (5, 1), (6, 5), (7, 6), (8, 2), (9, 8), (10, 9),
+            self.pairs = ((0, 1), (1, 1), (2, 1), (3, 2), (4, 3), (5, 1), (6, 5), (7, 6), (8, 2), (9, 8), (10, 9),
                           (11, 5), (12, 11), (13, 12), (14, 0), (15, 0), (16, 14), (17, 15))
+        elif self.dataset == 'openpose_new':
+            self.pairs = ((0, 1), (1, 1), (2, 1), (3, 2), (4, 3), (5, 1), (6, 5), (7, 6), (8, 18), (9, 8), (10, 9),
+                          (11, 18), (12, 11), (13, 12), (14, 0), (15, 0), (16, 14), (17, 15), (18, 19), (19, 1))
         elif self.dataset == 'coco':
             self.pairs = ((0, 0), (1, 0), (2, 0), (3, 1), (4, 2), (5, 0), (6, 0), (7, 5), (8, 6), (9, 7), (10, 8),
                           (11, 0), (12, 0), (13, 11), (14, 12), (15, 13), (16, 14))
+        elif self.dataset == 'coco_new':
+            self.pairs = ((0, 19), (1, 0), (2, 0), (3, 1), (4, 2), (5, 19), (6, 19), (7, 5), (8, 6), (9, 7), (10, 8),
+                          (11, 17), (12, 17), (13, 11), (14, 12), (15, 13), (16, 14), (17, 18), (18, 19), (19, 19))
         elif self.dataset == 'handmp':
             self.pairs = ((0, 0), (1, 0), (2, 1), (3, 2), (4, 3), (5, 0), (6, 5), (7, 6), (8, 7), (9, 0), (10, 9),
                           (11, 10), (12, 11), (13, 0), (14, 13), (15, 14), (16, 15), (17, 0), (18, 17), (19, 18),
@@ -324,7 +448,50 @@ class JointToBone:
         assert C in [2, 3]
         for v1, v2 in self.pairs:
             bone[..., v1, :] = keypoint[..., v1, :] - keypoint[..., v2, :]
-            if C == 3 and self.dataset in ['openpose', 'coco', 'handmp']:
+            if C == 3 and self.dataset in ['openpose', 'openpose_new', 'coco', 'coco_new', 'handmp']:
+                score = (keypoint[..., v1, 2] + keypoint[..., v2, 2]) / 2
+                bone[..., v1, 2] = score
+
+        results[self.target] = bone
+        return results
+
+
+@PIPELINES.register_module()
+class JointToKB:
+
+    def __init__(self, dataset='nturgb+d', target='keypoint'):
+        self.dataset = dataset
+        self.target = target
+        if self.dataset not in ['nturgb+d', 'openpose', 'openpose_new', 'coco', 'coco_new']:
+            raise ValueError(
+                f'The dataset type {self.dataset} is not supported')
+        if self.dataset == 'nturgb+d':
+            self.pairs = ((0, 20), (1, 1), (2, 2), (3, 20), (4, 4), (5, 20), (6, 4), (7, 5), (8, 8), (9, 20),
+                          (10, 8), (11, 9), (12, 1), (13, 0), (14, 12), (15, 13), (16, 1), (17, 0), (18, 16),
+                          (19, 17), (21, 7), (20, 20), (22, 6), (23, 11), (24, 10))
+        elif self.dataset == 'openpose':
+            self.pairs = ((0, 0), (1, 1), (2, 2), (3, 1), (4, 2), (5, 5), (6, 1), (7, 5), (8, 1), (9, 2), (10, 8),
+                          (11, 1), (12, 5), (13, 11), (14, 1), (15, 1), (16, 0), (17, 0))
+        elif self.dataset == 'openpose_new':
+            self.pairs = ((0, 0), (1, 1), (2, 2), (3, 1), (4, 2), (5, 5), (6, 1), (7, 5), (8, 19), (9, 18), (10, 8),
+                          (11, 19), (12, 18), (13, 11), (14, 1), (15, 1), (16, 0), (17, 0), (18, 1), (19, 19))
+        elif self.dataset == 'coco':
+            self.pairs = ((0, 0), (1, 1), (2, 2), (3, 0), (4, 0), (5, 5), (6, 6), (7, 0), (8, 0), (9, 5), (10, 6),
+                          (11, 11), (12, 12), (13, 0), (14, 0), (15, 11), (16, 12))
+        elif self.dataset == 'coco_new':
+            self.pairs = ((0, 0), (1, 19), (2, 19), (3, 0), (4, 0), (5, 5), (6, 6), (7, 19), (8, 19), (9, 5),
+                          (10, 6), (11, 18), (12, 18), (13, 17), (14, 17), (15, 11), (16, 12), (17, 19), (18, 18), (19, 19))
+
+    def __call__(self, results):
+
+        keypoint = results['keypoint']
+        M, T, V, C = keypoint.shape
+        bone = np.zeros((M, T, V, C), dtype=np.float32)
+
+        assert C in [2, 3]
+        for v1, v2 in self.pairs:
+            bone[..., v1, :] = keypoint[..., v1, :] - keypoint[..., v2, :]
+            if C == 3 and self.dataset in ['openpose', 'coco']:
                 score = (keypoint[..., v1, 2] + keypoint[..., v2, 2]) / 2
                 bone[..., v1, 2] = score
 
@@ -383,11 +550,15 @@ class GenSkeFeat:
         ops = []
         if 'b' in feats or 'bm' in feats:
             ops.append(JointToBone(dataset=dataset, target='b'))
+        if 'k' in feats or 'km' in feats:
+            ops.append(JointToKB(dataset=dataset, target='k'))
         ops.append(Rename({'keypoint': 'j'}))
         if 'jm' in feats:
             ops.append(ToMotion(dataset=dataset, source='j', target='jm'))
         if 'bm' in feats:
             ops.append(ToMotion(dataset=dataset, source='b', target='bm'))
+        if 'km' in feats:
+            ops.append(ToMotion(dataset=dataset, source='k', target='km'))
         ops.append(MergeSkeFeat(feat_list=feats, axis=axis))
         self.ops = Compose(ops)
 

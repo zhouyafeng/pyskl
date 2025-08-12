@@ -157,7 +157,7 @@ class UniformSampleFrames:
             coeff = np.array([transitional[i] for i in inds_int])
             inds = (coeff * inds_int + (1 - coeff) * inds).astype(np.float32)
 
-        results['frame_inds'] = inds.astype(int)
+        results['frame_inds'] = inds.astype(np.int)
         results['clip_len'] = self.clip_len
         results['frame_interval'] = None
         results['num_clips'] = self.num_clips

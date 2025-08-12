@@ -243,7 +243,7 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
             key = results.pop('key')
             try:
                 pack = self.cli.get(key)
-            except:
+            except BaseException:
                 self.cli = Client(self.mc_cfg, serde=serde.pickle_serde)
                 pack = self.cli.get(key)
             if not isinstance(pack, dict):
@@ -253,7 +253,7 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
                 for k in data:
                     try:
                         self.cli.set(k, data[k])
-                    except:
+                    except BaseException:
                         self.cli = Client(self.mc_cfg, serde=serde.pickle_serde)
                         self.cli.set(k, data[k])
             for k in pack:
@@ -284,7 +284,7 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
             key = results.pop('key')
             try:
                 pack = self.cli.get(key)
-            except:
+            except BaseException:
                 self.cli = Client(self.mc_cfg, serde=serde.pickle_serde)
                 pack = self.cli.get(key)
             if not isinstance(pack, dict):
@@ -294,7 +294,7 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
                 for k in data:
                     try:
                         self.cli.set(k, data[k])
-                    except:
+                    except BaseException:
                         self.cli = Client(self.mc_cfg, serde=serde.pickle_serde)
                         self.cli.set(k, data[k])
             for k in pack:
@@ -311,6 +311,9 @@ class BaseDataset(Dataset, metaclass=ABCMeta):
             results['label'] = onehot
 
         results['test_mode'] = self.test_mode
+
+        results['idx'] = idx
+
         return self.pipeline(results)
 
     def __len__(self):
